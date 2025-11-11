@@ -1,539 +1,504 @@
-// Funcionando todo
-// app.js — UI + Auth + RTDB + Minijuego (tabs robustas)
+// app.js
+import { auth, db } from "./firebase.js";
 import {
-  onAuth,
-  signUp, signIn, signOutUser,
-  getUserProfile,
-  saveScore, getLeaderboard, subscribeLeaderboard,
-  joinQueueAny,
-  cancelQueue,
-  subscribeUserMatch,
-  sendFriendRequest,
-  subscribeFriendInbox,
-  acceptFriendRequest,
-  rejectFriendRequest,
-  subscribeFriendsList,
-  removeFriendBoth
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  signOut,
+  onAuthStateChanged,
+} from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
+import {
+  ref, set, get, child, update, onValue, remove, onDisconnect
+} from "https://www.gstatic.com/firebasejs/10.12.4/firebase-database.js";
 
-} from './firebase.js';
+const $ = (s) => document.querySelector(s);
 
-const $ = (sel) => document.querySelector(sel);
+// ======= UI existente =======
+const loginContainer = $("#loginContainer");
+const appSection = $("#appSection");
+const authMsg = $("#authMsg");
+const authAlert = $("#authAlert");
+const welcome = $("#welcome");
+const inpUser = $("#usernameInput");
+const inpPass = $("#passwordInput");
+const loginButton = $("#loginButton");
+const registerButton = $("#registerButton");
+const resetPwdButton = $("#resetPwdButton");
+const logoutButton = $("#logoutButton");
+const btnRefresh = $("#btnRefresh");
+const tblBody = $("#tblBody");
+const listMsg = $("#listMsg");
 
-// ===== Estado =====
-const state = {
-  user: null,
-  profile: null,
-  unsubLb: null,
-  unsubMatch: null,
-  unsubInbox: null,
-  unsubFriends: null
+// ======= UI amigos =======
+const friendEmailInput = document.getElementById("friendEmailInput");
+const sendFriendReqBtn = document.getElementById("sendFriendReqBtn");
+const inboxList = document.getElementById("inboxList");
+const friendsList = document.getElementById("friendsList");
+
+// ======= UI panel online =======
+const onlineFriendsList = document.getElementById("onlineFriendsList");
+
+// ======= UI toasts =======
+const toastContainer = document.getElementById("toastContainer");
+function showToast(message, variant = "ok") {
+  if (!toastContainer) return;
+  const el = document.createElement("div");
+  el.className = `toast toast--${variant}`;
+  el.innerHTML = `<strong>${variant === "ok" ? "Conectado" : "Desconectado"}</strong>${message}`;
+  toastContainer.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ======= UI matchmaking =======
+const btnFindMatch = document.getElementById("btnFindMatch");
+const btnCancelMatch = document.getElementById("btnCancelMatch");
+const mmStatus = document.getElementById("mmStatus");
+
+let unsubInbox = null;
+let unsubFriends = null;
+let unsubLeaderboard = null;
+let unsubOnline = null;
+let unsubUserMatch = null;
+
+let friendsCache = {};     // { friendUid: {uid, username, email} }
+let onlineCache = {};      // { uid: { username, ts } }
+let prevOnlineSet = new Set();
+let onlineInitialized = false;
+
+// --- Helpers de sesión local ---
+const storage = {
+  get username() { return localStorage.getItem("sid_username") || ""; },
+  set username(v) { v ? localStorage.setItem("sid_username", v) : localStorage.removeItem("sid_username"); },
+  get email() { return localStorage.getItem("sid_email") || ""; },
+  set email(v) { v ? localStorage.setItem("sid_email", v) : localStorage.removeItem("sid_email"); },
 };
 
+function showAuth() { loginContainer.classList.remove("hidden"); appSection.classList.add("hidden"); }
+function showApp()  { loginContainer.classList.add("hidden"); appSection.classList.remove("hidden"); welcome.textContent = `Hola, ${storage.username}`; }
+function showAlert(type, text) { authAlert.innerHTML = `<div class="alert ${type === "error" ? "alert--error" : "alert--success"}">${text}</div>`; }
+function clearAlert() { authAlert.innerHTML = ""; }
 
-// ===== Vistas =====
-function showAuth() {
-  $('#view-auth').classList.remove('is-hidden');
-  $('#view-dashboard').classList.add('is-hidden');
-}
-function showDash() {
-  $('#view-dashboard').classList.remove('is-hidden');
-  $('#view-auth').classList.add('is-hidden');
-}
-
-// ===== Tabs (simple) =====
-function activateTab(which) {
-  const isLogin = which === 'login';
-  const btnLogin = $('#tab-login');
-  const btnReg   = $('#tab-register');
-  const formLogin = $('#form-login');
-  const formReg   = $('#form-register');
-
-  if (!btnLogin || !btnReg || !formLogin || !formReg) return;
-
-  btnLogin.classList.toggle('is-active', isLogin);
-  btnReg.classList.toggle('is-active', !isLogin);
-  btnLogin.setAttribute('aria-selected', isLogin ? 'true' : 'false');
-  btnReg.setAttribute('aria-selected', !isLogin ? 'true' : 'false');
-
-  formLogin.classList.toggle('is-active', isLogin);
-  formReg.classList.toggle('is-active', !isLogin);
+// ======================= AUTH =======================
+async function apiRegister(email, password) {
+  const cred = await createUserWithEmailAndPassword(auth, email, password);
+  const uid = cred.user.uid;
+  const username = email.split("@")[0];
+  await set(ref(db, `users/${uid}`), { username, email, score: 0, createdAt: Date.now() });
 }
 
-function bindTabs() {
-  const btnLogin = $('#tab-login');
-  const btnReg   = $('#tab-register');
-  if (!btnLogin || !btnReg) return;
-
-  btnLogin.type = 'button';
-  btnReg.type   = 'button';
-
-  btnLogin.addEventListener('click', (e) => { e.preventDefault(); activateTab('login'); });
-  btnReg.addEventListener('click',   (e) => { e.preventDefault(); activateTab('register'); });
-}
-
-// ===== Perfil / UI =====
-function initialsFrom(name) {
-  if (!name) return '?';
-  const parts = String(name).split(/[\s._@-]+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
-function renderProfile(profile) {
-  $('#profile-avatar').textContent  = initialsFrom(profile?.username || profile?.email);
-  $('#profile-username').textContent = profile?.username || '—';
-  $('#profile-email').textContent    = profile?.email || '';
-  $('#profile-score').textContent    = String(profile?.score ?? 0);
-}
-
-// ===== Leaderboard =====
-async function reloadLeaderboard() {
-  const limit = Math.max(1, Math.min(100, Number($('#lb-limit').value || 20)));
-  const users = await getLeaderboard({ limit });
-  paintLeaderboard(users);
-}
-function paintLeaderboard(users) {
-   console.log('paintLeaderboard recibió usuarios:', users);
-  const tbody = $('#table-lb tbody');
-  tbody.innerHTML = '';
-  users.forEach((u, i) => {
-    const tr = document.createElement('tr');
-    // La clase 'me' se aplicará si el usuario logueado coincide con el UID de la fila.
-    // `state.user` se actualiza por `onAuth`, así que esto funcionará.
-    if (state.user && u.uid === state.user.uid) tr.classList.add('me');
-    tr.innerHTML = `<td>${i + 1}</td><td>${u.username || u.email}</td><td>${u?.score ?? 0}</td>`;
-    tbody.appendChild(tr);
-  });
-}
-
-
-
-function bindAuthWatcher() {
-  onAuth(async (user) => {
-    state.user = user;
-
-    // Limpieza de suscripciones previas
-    if (state.unsubMatch)   { state.unsubMatch();   state.unsubMatch = null; }
-    if (state.unsubInbox)   { state.unsubInbox();   state.unsubInbox = null; }
-    if (state.unsubFriends) { state.unsubFriends(); state.unsubFriends = null; }
-
-    if (!user) {
-      state.profile = null;
-      showAuth();
-      activateTab('login');
-      renderProfile(null);
-
-      // Reset UI de matchmaking
-      const lblS = document.querySelector('#mm-state');
-      const lblId = document.querySelector('#mm-match-id');
-      if (lblS) lblS.textContent = 'Idle';
-      if (lblId) lblId.textContent = '—';
-
-      // Reset UI social
-      const inboxList = document.querySelector('#fr-inbox');
-      const friendsList = document.querySelector('#fr-list');
-      if (inboxList)   inboxList.innerHTML = `<li class="muted">No tienes solicitudes.</li>`;
-      if (friendsList) friendsList.innerHTML = `<li class="muted">Aún no tienes amigos.</li>`;
-    } else {
-      state.profile = await getUserProfile(user.uid);
-      renderProfile(state.profile);
-      showDash();
-
-      // --- Matchmaking: notificación de empareje ---
-      state.unsubMatch = subscribeUserMatch(user.uid, (info) => {
-        const lblS = document.querySelector('#mm-state');
-        const lblId = document.querySelector('#mm-match-id');
-        if (!info) return;
-        if (lblS) lblS.textContent = `Match listo con ${info.opponent?.username || 'rival'}`;
-        if (lblId) lblId.textContent = info.matchId || '—';
-        cancelQueue(user.uid).catch(() => {});
-      });
-
-      // --- Social: Inbox de solicitudes ---
-      state.unsubInbox = subscribeFriendInbox(user.uid, (data) => {
-        renderInboxUI(user.uid, data);
-      });
-
-      // --- Social: Lista de amigos ---
-      state.unsubFriends = subscribeFriendsList(user.uid, (friends) => {
-        renderFriendsUI(friends);
-      });
-    }
-
-    await reloadLeaderboard();
-  });
-}
-
-
-
-// ===== Formularios =====
-function bindForms() {
-  // Registro
-  $('#form-register').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const f   = e.currentTarget;
-    const msg = $('#msg-register');
-    const btn = f.querySelector('button[type="submit"]');
-
-    const email    = f.email.value.trim();
-    const username = f.username.value.trim();
-    const password = f.password.value;
-
-    if (!email || !password || !username) {
-      msg.textContent = 'Completa email, nombre de usuario y contraseña.';
-      return;
-    }
-
-    btn.disabled = true; msg.textContent = 'Creando...';
-    try {
-      await signUp({ email, password, username });
-      msg.textContent = 'Cuenta creada. Sesión iniciada.';
-      f.reset();
-    } catch (err) {
-      console.error('[register]', err);
-      msg.textContent = err.message || 'Error al registrar.';
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  // Login
-  $('#form-login').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const f   = e.currentTarget;
-    const msg = $('#msg-login');
-    const btn = f.querySelector('button[type="submit"]');
-
-    const email    = f.email.value.trim();
-    const password = f.password.value;
-
-    if (!email || !password) {
-      msg.textContent = 'Completa email y contraseña.';
-      return;
-    }
-
-    btn.disabled = true; msg.textContent = 'Autenticando...';
-    try {
-      await signIn({ email, password });
-      msg.textContent = '';
-      f.reset();
-    } catch (err) {
-      console.error('[login]', err);
-      msg.textContent = err.message || 'No se pudo iniciar sesión.';
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  // Logout
-  $('#btn-logout').addEventListener('click', async () => {
-    await signOutUser();
-    showAuth(); // Volver a la vista de autenticación
-    activateTab('login'); // Asegurar que la pestaña de login esté activa
-  });
-
-  // Recargar leaderboard manualmente
-  $('#btn-reload-lb').addEventListener('click', reloadLeaderboard);
-}
-
-// ===== Minijuego (Dino Runner) =====
-class DinoRunner {
-  constructor(canvas) {
-    this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
-    this.W = canvas.width; this.H = canvas.height;
-    this.groundY = this.H - 50;
-
-    this.dino = { x: 60, y: this.groundY - 40, w: 44, h: 44, vy: 0, onGround: true };
-    this.obstacles = [];
-    this.speed = 280; this.speedGain = 0.08;
-    this.gravity = 1400; this.jumpV = -520;
-    this.spawnEvery = [700, 1300]; this.spawnTimer = 0;
-    this.score = 0; this.best = 0; this.running = true; this.gameOver = false;
-    this.last = performance.now();
-    this._sent = false;
-
-    window.addEventListener('keydown', (e) => {
-      if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); this._jump(); }
-      if (e.code === 'KeyP') this.running = !this.running;
-      if (e.code === 'KeyR' && this.gameOver) this._reset();
-    });
-    canvas.addEventListener('pointerdown', () => this._jump());
-
-    this._tick = this._tick.bind(this);
-    requestAnimationFrame(this._tick);
-  }
-  _reset() {
-    this.obstacles = []; this.speed = 280; this.spawnTimer = 0;
-    this.score = 0; this.gameOver = false; this.running = true; this._sent = false;
-    this.dino.y = this.groundY - this.dino.h; this.dino.vy = 0; this.dino.onGround = true;
-  }
-  _jump() { if (this.dino.onGround && !this.gameOver) { this.dino.vy = this.jumpV; this.dino.onGround = false; } }
-  _rand(a,b){ return Math.random()*(b-a)+a; }
-  _spawn() {
-    const h = this._rand(28,56), w = this._rand(16,34), y = this.groundY - h, gap = this._rand(140,240);
-    this.obstacles.push({ x: this.W + gap, y, w, h });
-  }
-  _collides(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
-
-  _tick(now) {
-    const dt = Math.min(0.033, (now - this.last)/1000); this.last = now;
-
-    if (this.running && !this.gameOver) {
-      this.dino.vy += this.gravity*dt; this.dino.y += this.dino.vy*dt;
-      if (this.dino.y >= this.groundY - this.dino.h) {
-        this.dino.y = this.groundY - this.dino.h; this.dino.vy=0; this.dino.onGround=true;
-      }
-      this.spawnTimer -= dt*1000; if (this.spawnTimer<=0){ this._spawn(); this.spawnTimer = this._rand(700,1300); }
-      for (const o of this.obstacles) o.x -= this.speed*dt;
-      this.obstacles = this.obstacles.filter(o => o.x + o.w > -20);
-
-      for (const o of this.obstacles) {
-        if (this._collides(this.dino,o)) {
-          this.gameOver = true; this.running=false; this.best = Math.max(this.best, Math.floor(this.score));
-          break;
-        }
-      }
-
-      this.speed += this.speedGain;
-      this.score += (this.speed*dt)/8;
-    }
-
-    const c=this.ctx; c.clearRect(0,0,this.W,this.H);
-    c.fillStyle='#fafafa'; c.fillRect(0,0,this.W,this.H);
-    c.strokeStyle='#bdbdbd'; c.lineWidth=2; c.beginPath(); c.moveTo(0,this.groundY); c.lineTo(this.W,this.groundY); c.stroke();
-    c.fillStyle='#4a4a4a'; for (const o of this.obstacles) c.fillRect(o.x,o.y,o.w,o.h);
-    c.fillStyle='#222'; c.fillRect(this.dino.x,this.dino.y,this.dino.w,this.dino.h);
-    c.fillStyle='#fff'; c.fillRect(this.dino.x+this.dino.w-12,this.dino.y+10,6,6);
-    c.fillStyle='#222'; c.font='16px system-ui, sans-serif';
-    c.fillText(`Score: ${Math.floor(this.score)}`, 12, 22);
-    c.fillText(`Best: ${this.best}`, 12, 42);
-    if (!this.running && !this.gameOver) { c.fillStyle='#666'; c.font='bold 16px system-ui, sans-serif'; c.fillText('Pausado (P)', this.W/2-40, 40); }
-    if (this.gameOver) { c.fillStyle='#d32f2f'; c.font='bold 18px system-ui, sans-serif'; c.fillText('¡Game Over! R = reiniciar', this.W/2-120, 40); }
-
-    requestAnimationFrame(this._tick);
-
-    if (this.gameOver && state.user && !this._sent) {
-      this._sent = true;
-      const s = Math.floor(this.score);
-      $('#msg-game').textContent = 'Guardando score...';
-      saveScore(state.user.uid, s).then(async () => {
-        $('#msg-game').textContent = `Score guardado: ${s}`;
-        state.profile = await getUserProfile(state.user.uid);
-        renderProfile(state.profile);
-        // Ya no necesitamos reloadLeaderboard() aquí, la suscripción global lo manejará.
-        // Pero lo mantenemos para garantizar una actualización inmediata de la UI
-        // si no hay un cambio en la base de datos que la dispare.
-        reloadLeaderboard();
-      }).catch((err) => {
-        console.error('[saveScore]', err);
-        $('#msg-game').textContent = 'No se pudo guardar el score.';
-      }).finally(() => {
-        setTimeout(()=>{ this._sent=false; }, 500);
-      });
-    }
+async function apiLogin(email, password) {
+  const cred = await signInWithEmailAndPassword(auth, email, password);
+  const uid = cred.user.uid;
+  const snap = await get(child(ref(db), `users/${uid}`));
+  const node = snap.exists() ? snap.val() : {};
+  const username = node.username ?? email.split("@")[0];
+  storage.username = username;
+  storage.email = node.email ?? email;
+  if (!snap.exists() || !node.username || !node.email) {
+    await update(ref(db, `users/${uid}`), { username, email: storage.email });
   }
 }
 
-// ===== Init =====
-function init() {
+// botones
+loginButton.addEventListener("click", async (e) => {
+  e.preventDefault(); clearAlert(); authMsg.textContent = "";
+  const u = inpUser.value.trim(), p = inpPass.value;
+  try { await apiLogin(u, p); } catch { showAlert("error", "Error al iniciar sesión"); }
+});
+registerButton.addEventListener("click", async () => {
+  clearAlert();
+  const u = inpUser.value.trim(), p = inpPass.value;
+  try { await apiRegister(u, p); showAlert("success", "Usuario registrado correctamente."); }
+  catch { showAlert("error", "No se pudo registrar."); }
+});
+resetPwdButton.addEventListener("click", async () => {
+  const email = inpUser.value.trim();
+  if (!email.includes("@")) return showAlert("error", "Escribe tu email.");
+  await sendPasswordResetEmail(auth, email);
+  showAlert("success", "Correo de recuperación enviado.");
+});
+
+logoutButton.addEventListener("click", async () => {
+  const u = auth.currentUser;
+  if (u) { try { await remove(ref(db, `users-online/${u.uid}`)); } catch {} }
+  await signOut(auth);
+  storage.username = ""; storage.email = "";
+  cleanupSubscriptions();
   showAuth();
-  bindTabs();
-  activateTab('login');   // estado inicial
-  bindForms();
-  bindAuthWatcher();
-  bindMatchmaking();
-  bindFriendsUI();
-  bindInboxActions();
-  reloadLeaderboard();
-  state.unsubLb = subscribeLeaderboard(
-    { limit: Number($('#lb-limit').value || 20) },
-    paintLeaderboard
-  );
-  // ************************
+});
 
-  const canvas = document.getElementById('runner');
-  if (canvas) new DinoRunner(canvas);
-}
+// ======================= SESIÓN =======================
+onAuthStateChanged(auth, async (u) => {
+  if (u) {
+    showApp();
+    await ensureProfile(u);
+    setupPresence(u);
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
-}
+    await loadLeaderboard();
+    subscribeLeaderboard();
 
-function bindMatchmaking() {
-  const findBtn   = document.querySelector('#btn-find-match');
-  const cancelBtn = document.querySelector('#btn-cancel-match');
-  const lblS = document.querySelector('#mm-state');
-  const lblId = document.querySelector('#mm-match-id');
-  if (!findBtn || !cancelBtn) return;
+    subscribeInbox(u.uid);
+    subscribeFriends(u.uid);
+    subscribeOnline();
 
-  findBtn.onclick = async () => {
-    if (!state.user) return;
-    const name = state.profile?.username || (state.profile?.email?.split('@')[0]) || 'Usuario';
-    lblS && (lblS.textContent = 'Buscando...');
-    findBtn.disabled = true; cancelBtn.disabled = true;
-    try {
-      await joinQueueAny({ uid: state.user.uid, username: name });
-      cancelBtn.disabled = false; // ya quedó en cola
-    } catch (e) {
-      console.error('[matchmaking] joinQueueAny', e);
-      lblS && (lblS.textContent = 'Error');
-      findBtn.disabled = false; cancelBtn.disabled = true;
+    // matchmaking: escucha si otro te empareja
+    subscribeUserMatch(u.uid);
+
+  } else {
+    cleanupSubscriptions();
+    showAuth();
+  }
+});
+
+async function ensureProfile(u) {
+  const userRef = ref(db, `users/${u.uid}`);
+  const snap = await get(userRef);
+  const fallbackName = storage.username || (u.email ? u.email.split("@")[0] : "Usuario");
+  const fallbackEmail = storage.email || u.email || "";
+  if (!snap.exists()) {
+    await set(userRef, { username: fallbackName, email: fallbackEmail, score: 0, createdAt: Date.now() });
+  } else {
+    const v = snap.val() || {};
+    if (!v.username || !v.email) {
+      await update(userRef, { username: v.username ?? fallbackName, email: v.email ?? fallbackEmail });
     }
-  };
+  }
+}
 
-  cancelBtn.onclick = async () => {
-    if (!state.user) return;
-    try { await cancelQueue(state.user.uid); } catch {}
-    lblS && (lblS.textContent = 'Cancelado');
-    lblId && (lblId.textContent = '—');
-    findBtn.disabled = false; cancelBtn.disabled = true;
-  };
+// ======================= PRESENCIA =======================
+function setupPresence(u) {
+  const meRef = ref(db, `users-online/${u.uid}`);
+  const payload = { username: storage.username || (u.email ? u.email.split("@")[0] : "Usuario"), ts: Date.now() };
+  set(meRef, payload);
+  try { onDisconnect(meRef).remove(); } catch {}
+}
 
-  window.addEventListener('beforeunload', () => {
-    if (state?.user) cancelQueue(state.user.uid).catch(()=>{});
+function subscribeOnline() {
+  if (unsubOnline) unsubOnline();
+  const off = onValue(ref(db, `users-online`), (snap) => {
+    onlineCache = snap.exists() ? snap.val() : {};
+    renderOnlineFriends();
+
+    const current = new Set(Object.keys(friendsCache || {}).filter(uid => onlineCache[uid]));
+    if (onlineInitialized) {
+      for (const uid of current) if (!prevOnlineSet.has(uid)) {
+        const name = friendsCache[uid]?.username || friendsCache[uid]?.email?.split("@")[0] || "Amigo";
+        showToast(`${name} se conectó`, "ok");
+      }
+      for (const uid of prevOnlineSet) if (!current.has(uid)) {
+        const name = friendsCache[uid]?.username || friendsCache[uid]?.email?.split("@")[0] || "Amigo";
+        showToast(`${name} se desconectó`, "off");
+      }
+    }
+    prevOnlineSet = current;
+    onlineInitialized = true;
   });
+  unsubOnline = () => off();
 }
 
-function bindFriendsUI() {
-  const input = document.querySelector('#fr-email');
-  const btn   = document.querySelector('#fr-send');
-  const msg   = document.querySelector('#fr-msg');
-
-  if (!input || !btn) return;
-
-  btn.onclick = async () => {
-    if (!state.user) return;
-    const email = String(input.value || '').trim().toLowerCase();
-    if (!email || !email.includes('@')) {
-      if (msg) msg.textContent = 'Escribe un correo válido.';
-      return;
-    }
-    btn.disabled = true; if (msg) msg.textContent = 'Enviando...';
-    try {
-      const fromName  = state.profile?.username || (state.profile?.email?.split('@')[0]) || 'Usuario';
-      const fromEmail = state.profile?.email || '';
-      await sendFriendRequest({ fromUid: state.user.uid, fromName, fromEmail, toEmail: email });
-      if (msg) msg.textContent = 'Solicitud enviada.';
-      input.value = '';
-    } catch (e) {
-      console.error('[friends] send', e);
-      if (msg) msg.textContent = e?.message || 'No se pudo enviar.';
-    } finally {
-      btn.disabled = false;
-      setTimeout(()=>{ if (msg) msg.textContent = ''; }, 1500);
-    }
-  };
-}
-
-function renderInboxUI(myUid, inboxObj) {
-  const ul = document.querySelector('#fr-inbox');
-  if (!ul) return;
-  ul.innerHTML = '';
-
-  const entries = Object.entries(inboxObj || {});
-  if (!entries.length) {
-    ul.innerHTML = `<li class="muted">No tienes solicitudes.</li>`;
+function renderOnlineFriends() {
+  if (!onlineFriendsList) return;
+  onlineFriendsList.innerHTML = "";
+  const friendsUids = Object.keys(friendsCache || {});
+  const onlineFriends = friendsUids.filter(uid => onlineCache[uid]);
+  if (onlineFriends.length === 0) {
+    onlineFriendsList.innerHTML = `<li class="muted">Ningún amigo en línea.</li>`;
     return;
   }
-
-  entries
-    .sort((a,b) => (a[1]?.ts || 0) - (b[1]?.ts || 0))
-    .forEach(([fromUid, req]) => {
-      const name   = req.fromName || (req.fromEmail ? req.fromEmail.split('@')[0] : fromUid);
-      const status = (req.status || 'pending');
-
-      const li = document.createElement('li');
-      li.dataset.from = fromUid;  // <- clave para delegación
-      li.innerHTML = `
-        <div class="row" style="justify-content:space-between; width:100%;">
-          <div><b>${name}</b> <span class="muted">(${status})</span></div>
-          ${status === 'pending' ? `
-            <div class="row">
-              <button type="button" class="fr-accept" data-from="${fromUid}">Aceptar</button>
-              <button type="button" class="fr-reject secondary" data-from="${fromUid}">Rechazar</button>
-            </div>
-          ` : ``}
-        </div>
-      `;
-      ul.appendChild(li);
-    });
+  onlineFriends.forEach(uid => {
+    const f = friendsCache[uid];
+    const li = document.createElement("li");
+    li.className = "chip";
+    li.innerHTML = `<span class="dot"></span><span>${f.username || (f.email ? f.email.split("@")[0] : uid)}</span>`;
+    onlineFriendsList.appendChild(li);
+  });
 }
 
+// ======================= LEADERBOARD =======================
+function renderLeaderboard(users) {
+  tblBody.innerHTML = "";
+  users.forEach((u, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${i + 1}</td><td>${u.username ?? "—"}</td><td>${Number(u.score) || 0}</td>`;
+    tblBody.appendChild(tr);
+  });
+  listMsg.textContent = `Total: ${users.length}`;
+}
 
+async function apiListUsersOnce() {
+  const snap = await get(ref(db, "users"));
+  if (!snap.exists()) return [];
+  return Object.values(snap.val() || {})
+    .map(u => ({ ...u, username: u.username ?? (u.email ? u.email.split("@")[0] : "—"), score: Number(u.score) || 0 }))
+    .sort((a, b) => b.score - a.score);
+}
 
-function renderFriendsUI(friendsObj) {
-  const ul = document.querySelector('#fr-list');
-  if (!ul) return;
-  ul.innerHTML = '';
+async function loadLeaderboard() {
+  try {
+    listMsg.textContent = "Cargando...";
+    const users = await apiListUsersOnce();
+    renderLeaderboard(users);
+    listMsg.textContent = users.length ? `Total: ${users.length}` : "Sin datos aún.";
+  } catch (e) {
+    console.error("Leaderboard error:", e);
+    listMsg.textContent = "No se pudo cargar.";
+    tblBody.innerHTML = "";
+  }
+}
+btnRefresh.addEventListener("click", loadLeaderboard);
+
+function subscribeLeaderboard() {
+  if (unsubLeaderboard) unsubLeaderboard();
+  const off = onValue(ref(db, "users"), (snap) => {
+    const val = snap.val() || {};
+    const list = Object.values(val)
+      .map(u => ({ ...u, username: u.username ?? (u.email ? u.email.split("@")[0] : "—"), score: Number(u.score) || 0 }))
+      .sort((a, b) => b.score - a.score);
+    renderLeaderboard(list);
+  });
+  unsubLeaderboard = () => off();
+}
+
+// ======================= Puntaje (juego) =======================
+async function apiUpdateScore(score) {
+  const u = auth.currentUser;
+  if (!u) throw new Error("No autenticado");
+  const username = storage.username || (u.email ? u.email.split("@")[0] : "Usuario");
+  await update(ref(db, `users/${u.uid}`), { score: Number(score) || 0, lastPlayed: Date.now(), username });
+}
+window.sendScoreToFirebase = async function (score) {
+  try { await apiUpdateScore(score); await loadLeaderboard(); }
+  catch (e) { console.error("Error al guardar el puntaje:", e); }
+};
+
+// ======================= AMIGOS (resumido) =======================
+sendFriendReqBtn?.addEventListener("click", async () => {
+  const targetEmail = (friendEmailInput?.value || "").trim().toLowerCase();
+  if (!targetEmail || !targetEmail.includes("@")) return showAlert("error", "Escribe un correo válido.");
+  const me = auth.currentUser;
+  if (!me) return showAlert("error", "Inicia sesión.");
+  try {
+    const target = await findUserByEmail(targetEmail);
+    if (!target) return showAlert("error", "Ese correo no está registrado.");
+    if (target.uid === me.uid) return showAlert("error", "No puedes enviarte solicitud a ti mismo.");
+    await sendFriendRequest(me.uid, target.uid, targetEmail, storage.username || me.email.split("@")[0]);
+    showAlert("success", "Solicitud enviada.");
+    friendEmailInput.value = "";
+  } catch (e) { console.error(e); showAlert("error", "No se pudo enviar la solicitud."); }
+});
+
+async function findUserByEmail(email) {
+  const snap = await get(ref(db, "users"));
+  if (!snap.exists()) return null;
+  const users = snap.val();
+  for (const uid of Object.keys(users)) {
+    const u = users[uid];
+    if ((u.email || "").toLowerCase() === email) return { uid, ...u };
+  }
+  return null;
+}
+async function sendFriendRequest(fromUid, toUid, toEmail, fromName) {
+  const ts = Date.now();
+  await update(ref(db, `users/${fromUid}/friendRequests/outbox/${toUid}`), {
+    toUid, toEmail, status: "pending", ts
+  });
+  await update(ref(db, `users/${toUid}/friendRequests/inbox/${fromUid}`), {
+    fromUid: fromUid, fromEmail: (storage.email || ""), fromName: fromName, status: "pending", ts
+  });
+}
+
+function subscribeInbox(uid) {
+  if (unsubInbox) unsubInbox();
+  const off = onValue(ref(db, `users/${uid}/friendRequests/inbox`), (snap) => {
+    const data = snap.exists() ? snap.val() : {};
+    renderInbox(uid, data);
+  });
+  unsubInbox = () => off();
+}
+
+function renderInbox(myUid, inboxObj) {
+  inboxList.innerHTML = "";
+  const entries = Object.entries(inboxObj || {});
+  if (!entries.length) {
+    inboxList.innerHTML = `<li class="muted">No tienes solicitudes.</li>`;
+    return;
+  }
+  entries.forEach(([fromUid, req]) => {
+    const name = req.fromName || (req.fromEmail ? req.fromEmail.split("@")[0] : fromUid);
+    const status = req.status || "pending";
+    const li = document.createElement("li");
+    const left = `<b>${name}</b> <span class="muted">(${status})</span>`;
+    const right = status === "pending"
+      ? `<div class="row"><button class="acceptBtn">Aceptar</button><button class="rejectBtn secondary">Rechazar</button></div>`
+      : ``;
+    li.innerHTML = `<div class="row" style="justify-content:space-between; width:100%;"><div>${left}</div>${right}</div>`;
+    if (status === "pending") {
+      li.querySelector(".acceptBtn").addEventListener("click", () => acceptRequest(myUid, fromUid));
+      li.querySelector(".rejectBtn").addEventListener("click", () => rejectRequest(myUid, fromUid));
+    }
+    inboxList.appendChild(li);
+  });
+}
+
+async function acceptRequest(myUid, fromUid) {
+  const mySnap = await get(child(ref(db), `users/${myUid}`));
+  const me = mySnap.val() || {};
+  const otherSnap = await get(child(ref(db), `users/${fromUid}`));
+  const other = otherSnap.val() || {};
+  const now = Date.now();
+  await update(ref(db, `users/${myUid}/friendRequests/inbox/${fromUid}`), { status: "accepted" });
+  await update(ref(db, `users/${myUid}/friends/${fromUid}`), {
+    uid: fromUid,
+    username: other.username || (other.email ? other.email.split("@")[0] : "Usuario"),
+    email: other.email || "", since: now
+  });
+  try {
+    await update(ref(db, `users/${fromUid}/friendRequests/outbox/${myUid}`), { status: "accepted" });
+    await update(ref(db, `users/${fromUid}/friends/${myUid}`), {
+      uid: myUid,
+      username: me.username || (me.email ? me.email.split("@")[0] : "Usuario"),
+      email: me.email || "", since: now
+    });
+    await remove(ref(db, `users/${myUid}/friendRequests/inbox/${fromUid}`));
+    await remove(ref(db, `users/${fromUid}/friendRequests/outbox/${myUid}`));
+  } catch (e) { console.warn("Reflejo de aceptación falló:", e); }
+}
+
+async function rejectRequest(myUid, fromUid) {
+  await update(ref(db, `users/${myUid}/friendRequests/inbox/${fromUid}`), { status: "rejected" });
+  try { await update(ref(db, `users/${fromUid}/friendRequests/outbox/${myUid}`), { status: "rejected" }); } catch {}
+  await remove(ref(db, `users/${myUid}/friendRequests/inbox/${fromUid}`));
+  try { await remove(ref(db, `users/${fromUid}/friendRequests/outbox/${myUid}`)); } catch {}
+}
+
+function subscribeFriends(uid) {
+  if (unsubFriends) unsubFriends();
+  const off = onValue(ref(db, `users/${uid}/friends`), (snap) => {
+    friendsCache = snap.exists() ? snap.val() : {};
+    renderFriends(friendsCache);
+    renderOnlineFriends();
+  });
+  unsubFriends = () => off();
+}
+
+function renderFriends(friendsObj) {
+  friendsList.innerHTML = "";
   const entries = Object.entries(friendsObj || {});
   if (!entries.length) {
-    ul.innerHTML = `<li class="muted">Aún no tienes amigos.</li>`;
+    friendsList.innerHTML = `<li class="muted">Aún no tienes amigos.</li>`;
     return;
   }
   entries
     .map(([uid, f]) => f)
-    .sort((a,b) => (a.username || '').localeCompare(b.username || ''))
+    .sort((a, b) => (a.username || "").localeCompare(b.username || ""))
     .forEach((f) => {
-      const li = document.createElement('li');
-      const label = f.username || (f.email ? f.email.split('@')[0] : f.uid);
+      const li = document.createElement("li");
+      const label = f.username || (f.email ? f.email.split("@")[0] : f.uid);
       li.innerHTML = `
         <div class="row" style="justify-content:space-between; width:100%;">
           <span>${label}</span>
-          <button class="icon-btn" title="Eliminar">🗑️</button>
-        </div>
-      `;
-      li.querySelector('.icon-btn').onclick = () => {
-        if (!state.user) return;
-        removeFriendBoth(state.user.uid, f.uid).catch(console.error);
-      };
-      ul.appendChild(li);
+          <button class="icon-btn" data-uid="${f.uid}" title="Eliminar amigo">🗑️</button>
+        </div>`;
+      li.querySelector(".icon-btn").addEventListener("click", () => removeFriendBoth(auth.currentUser.uid, f.uid));
+      friendsList.appendChild(li);
     });
 }
 
-function bindInboxActions() {
-  // Delegación global: funciona aunque vuelvas a renderizar la lista
-  document.addEventListener('click', async (e) => {
-    const acceptBtn = e.target.closest('#fr-inbox .fr-accept');
-    const rejectBtn = e.target.closest('#fr-inbox .fr-reject');
-    if (!acceptBtn && !rejectBtn) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!state.user) return;
-
-    // Tomamos el UID del remitente desde data-from (en el botón o el li)
-    const btn = acceptBtn || rejectBtn;
-    const fromUid = btn.getAttribute('data-from') ||
-                    btn.closest('li')?.dataset?.from;
-
-    if (!fromUid) return;
-
-    // Deshabilitamos mientras procesamos
-    const li = btn.closest('li');
-    const a = li?.querySelector('.fr-accept');
-    const r = li?.querySelector('.fr-reject');
-    if (a) a.disabled = true;
-    if (r) r.disabled = true;
-
-    try {
-      if (acceptBtn) {
-        await acceptFriendRequest({ myUid: state.user.uid, fromUid });
-      } else {
-        await rejectFriendRequest({ myUid: state.user.uid, fromUid });
-      }
-      // El UI se actualizará por la suscripción realtime (subscribeFriendInbox)
-    } catch (err) {
-      console.error('[friends] action error:', err);
-      // Rehabilita si algo falló
-      if (a) a.disabled = false;
-      if (r) r.disabled = false;
-    }
-  }, true);
+async function removeFriendBoth(myUid, friendUid) {
+  try {
+    await remove(ref(db, `users/${myUid}/friends/${friendUid}`));
+    await remove(ref(db, `users/${friendUid}/friends/${myUid}`));
+  } catch (e) { console.error("No se pudo eliminar amigo:", e); }
 }
 
+// ======================= MATCHMAKING =======================
+// Estructura:
+// matchmaking/queue/{uid} : { uid, username, ts }
+// matches/{matchId} : { aUid, bUid, createdAt, state: "matched" }
+// user-matches/{uid} : { matchId, opponent: { uid, username } }
 
+btnFindMatch?.addEventListener("click", joinQueueAny);
+btnCancelMatch?.addEventListener("click", cancelQueue);
 
+async function joinQueueAny() {
+  const u = auth.currentUser;
+  if (!u) return showAlert("error", "Inicia sesión.");
+  const me = { uid: u.uid, username: storage.username || (u.email ? u.email.split("@")[0] : "Usuario") };
+  mmStatus.textContent = "En cola buscando partida...";
+  // Ponme en cola
+  await set(ref(db, `matchmaking/queue/${u.uid}`), { uid: me.uid, username: me.username, ts: Date.now() });
+  try { onDisconnect(ref(db, `matchmaking/queue/${u.uid}`)).remove(); } catch {}
+  // Intentar emparejar con alguien
+  await tryPair(me);
+}
+
+async function cancelQueue() {
+  const u = auth.currentUser;
+  if (!u) return;
+  await remove(ref(db, `matchmaking/queue/${u.uid}`));
+  mmStatus.textContent = "Búsqueda cancelada.";
+}
+
+async function tryPair(me) {
+  const snap = await get(ref(db, `matchmaking/queue`));
+  const list = snap.exists() ? snap.val() : {};
+  // Busca el primer otro jugador en cola
+  let rival = null;
+  for (const otherUid of Object.keys(list)) {
+    if (otherUid === me.uid) continue;
+    rival = list[otherUid];
+    break;
+  }
+  if (!rival) {
+    mmStatus.textContent = "En cola... esperando a otro jugador.";
+    return; // quedo esperando
+  }
+
+  // Evitar colisiones: solo crea el match el UID "menor"
+  const aUid = me.uid < rival.uid ? me.uid : rival.uid;
+  const bUid = me.uid < rival.uid ? rival.uid : me.uid;
+
+  if (me.uid !== aUid) {
+    mmStatus.textContent = "Encontrado rival, esperando confirmación...";
+    return; // el otro creará
+  }
+
+  const aName = me.username;
+  const bName = rival.username;
+  const matchId = `${aUid}_${bUid}_${Date.now()}`;
+
+  const updates = {};
+  updates[`matches/${matchId}`] = { aUid, bUid, createdAt: Date.now(), state: "matched" };
+  updates[`user-matches/${aUid}`] = { matchId, opponent: { uid: bUid, username: bName } };
+  updates[`user-matches/${bUid}`] = { matchId, opponent: { uid: aUid, username: aName } };
+  updates[`matchmaking/queue/${aUid}`] = null;
+  updates[`matchmaking/queue/${bUid}`] = null;
+
+  await update(ref(db), updates);
+  mmStatus.textContent = `¡Emparejado con ${bName}!`;
+}
+
+// escucha si te emparejan (aunque empareje el otro)
+function subscribeUserMatch(uid) {
+  if (unsubUserMatch) unsubUserMatch();
+  const off = onValue(ref(db, `user-matches/${uid}`), (snap) => {
+    if (!snap.exists()) return;
+    const val = snap.val();
+    if (val?.opponent?.username) {
+      mmStatus.textContent = `¡Emparejado con ${val.opponent.username}! (Match: ${val.matchId})`;
+      // por si quedaste en cola por lag
+      remove(ref(db, `matchmaking/queue/${uid}`)).catch(() => {});
+    }
+  });
+  unsubUserMatch = () => off();
+}
+
+// Limpieza
+function cleanupSubscriptions() {
+  if (unsubInbox) unsubInbox();
+  if (unsubFriends) unsubFriends();
+  if (unsubLeaderboard) unsubLeaderboard();
+  if (unsubOnline) unsubOnline();
+  if (unsubUserMatch) unsubUserMatch();
+  unsubInbox = unsubFriends = unsubLeaderboard = unsubOnline = unsubUserMatch = null;
+}
