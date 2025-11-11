@@ -1,4 +1,4 @@
-// Funcionando todo
+// Funcionando solicitudes amistad
 // firebase.js — Firebase v12.4.0 por CDN (ESM)
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 import {
@@ -192,4 +192,108 @@ async function _attemptPair(me) {
   updates[`mm/queue/${other.uid}`] = null;
 
   await update(ref(db), updates);
+}
+
+export async function sendFriendRequest({ fromUid, fromName, fromEmail, toEmail }) {
+  const target = await _findUserByEmail(toEmail);
+  if (!target) throw new Error('El correo no está registrado.');
+  if (target.uid === fromUid) throw new Error('No puedes enviarte solicitud a ti mismo.');
+
+  const now = Date.now();
+  const updates = {};
+  // Outbox emisor
+  updates[`social/requests/outbox/${fromUid}/${target.uid}`] = {
+    toUid: target.uid, toName: target.username, toEmail: target.email || toEmail, status: 'pending', ts: now
+  };
+  // Inbox receptor
+  updates[`social/requests/inbox/${target.uid}/${fromUid}`] = {
+    fromUid, fromName: fromName || (fromEmail?.split('@')[0] || 'Usuario'), fromEmail: fromEmail || '', status: 'pending', ts: now
+  };
+  await update(ref(db), updates);
+}
+
+/** Bandeja de entrada de solicitudes (del usuario logueado) */
+export function subscribeFriendInbox(myUid, cb) {
+  const r = ref(db, `social/requests/inbox/${myUid}`);
+  return onValue(r, (snap) => cb(snap.exists() ? snap.val() : {}));
+}
+
+/** Aceptar solicitud: crea amistad en ambos sentidos y limpia solicitudes */
+// Reemplaza por completo
+export async function acceptFriendRequest({ myUid, fromUid }) {
+  const me    = await _readUser(myUid);
+  const other = await _readUser(fromUid);
+  const now = Date.now();
+
+  const updates = {};
+  // Crear amistad en ambos sentidos
+  updates[`social/friends/${myUid}/${fromUid}`] = {
+    uid: fromUid,
+    username: other?.username || (other?.email?.split('@')[0] || 'Usuario'),
+    email: other?.email || '',
+    since: now
+  };
+  updates[`social/friends/${fromUid}/${myUid}`] = {
+    uid: myUid,
+    username: me?.username || (me?.email?.split('@')[0] || 'Usuario'),
+    email: me?.email || '',
+    since: now
+  };
+  // Eliminar las solicitudes (sin escribir /status al mismo tiempo)
+  updates[`social/requests/inbox/${myUid}/${fromUid}`] = null;
+  updates[`social/requests/outbox/${fromUid}/${myUid}`] = null;
+
+  await update(ref(db), updates);
+  console.log('[friends] accepted ->', { myUid, fromUid });
+}
+
+// Reemplaza por completo
+export async function rejectFriendRequest({ myUid, fromUid }) {
+  const updates = {};
+  // Solo eliminamos; no escribimos /status para evitar conflicto ancestro/descendiente
+  updates[`social/requests/inbox/${myUid}/${fromUid}`] = null;
+  updates[`social/requests/outbox/${fromUid}/${myUid}`] = null;
+
+  await update(ref(db), updates);
+  console.log('[friends] rejected ->', { myUid, fromUid });
+}
+
+
+
+/** Lista de amigos del usuario */
+export function subscribeFriendsList(myUid, cb) {
+  const r = ref(db, `social/friends/${myUid}`);
+  return onValue(r, (snap) => cb(snap.exists() ? snap.val() : {}));
+}
+
+/** Eliminar amistad en ambos sentidos */
+export async function removeFriendBoth(myUid, friendUid) {
+  const updates = {};
+  updates[`social/friends/${myUid}/${friendUid}`] = null;
+  updates[`social/friends/${friendUid}/${myUid}`] = null;
+  await update(ref(db), updates);
+}
+
+// ----------------- Helpers internos -----------------
+async function _findUserByEmail(email) {
+  const snap = await get(ref(db, 'users'));
+  if (!snap.exists()) return null;
+  const users = snap.val() || {};
+  const q = String(email || '').trim().toLowerCase();
+  for (const [uid, u] of Object.entries(users)) {
+    const em = (u?.email || '').toLowerCase();
+    if (em === q) {
+      return {
+        uid,
+        email: u.email || '',
+        username: u.username || (u.email ? u.email.split('@')[0] : 'Usuario')
+      };
+    }
+  }
+  return null;
+}
+
+async function _readUser(uid) {
+  const s = await get(ref(db, `users/${uid}`));
+  return s.exists() ? (s.val() || {}) : {};
 }
