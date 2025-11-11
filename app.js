@@ -7,7 +7,13 @@ import {
   saveScore, getLeaderboard, subscribeLeaderboard,
   joinQueueAny,
   cancelQueue,
-  subscribeUserMatch
+  subscribeUserMatch,
+  sendFriendRequest,
+  subscribeFriendInbox,
+  acceptFriendRequest,
+  rejectFriendRequest,
+  subscribeFriendsList,
+  removeFriendBoth
 
 } from './firebase.js';
 
@@ -17,10 +23,12 @@ const $ = (sel) => document.querySelector(sel);
 const state = {
   user: null,
   profile: null,
-  unsubLb: null, // Mantendremos esta suscripción activa siempre
   unsubLb: null,
-  unsubMatch: null
+  unsubMatch: null,
+  unsubInbox: null,
+  unsubFriends: null
 };
+
 
 // ===== Vistas =====
 function showAuth() {
@@ -104,8 +112,10 @@ function bindAuthWatcher() {
   onAuth(async (user) => {
     state.user = user;
 
-    // Limpia listener previo de match
-    if (state.unsubMatch) { state.unsubMatch(); state.unsubMatch = null; }
+    // Limpieza de suscripciones previas
+    if (state.unsubMatch)   { state.unsubMatch();   state.unsubMatch = null; }
+    if (state.unsubInbox)   { state.unsubInbox();   state.unsubInbox = null; }
+    if (state.unsubFriends) { state.unsubFriends(); state.unsubFriends = null; }
 
     if (!user) {
       state.profile = null;
@@ -118,28 +128,42 @@ function bindAuthWatcher() {
       const lblId = document.querySelector('#mm-match-id');
       if (lblS) lblS.textContent = 'Idle';
       if (lblId) lblId.textContent = '—';
+
+      // Reset UI social
+      const inboxList = document.querySelector('#fr-inbox');
+      const friendsList = document.querySelector('#fr-list');
+      if (inboxList)   inboxList.innerHTML = `<li class="muted">No tienes solicitudes.</li>`;
+      if (friendsList) friendsList.innerHTML = `<li class="muted">Aún no tienes amigos.</li>`;
     } else {
       state.profile = await getUserProfile(user.uid);
       renderProfile(state.profile);
       showDash();
 
-      // Suscripción: te avisa cuando otro te emparejó
+      // --- Matchmaking: notificación de empareje ---
       state.unsubMatch = subscribeUserMatch(user.uid, (info) => {
         const lblS = document.querySelector('#mm-state');
         const lblId = document.querySelector('#mm-match-id');
         if (!info) return;
-
         if (lblS) lblS.textContent = `Match listo con ${info.opponent?.username || 'rival'}`;
         if (lblId) lblId.textContent = info.matchId || '—';
-
-        // Limpieza por si quedaste en cola
         cancelQueue(user.uid).catch(() => {});
+      });
+
+      // --- Social: Inbox de solicitudes ---
+      state.unsubInbox = subscribeFriendInbox(user.uid, (data) => {
+        renderInboxUI(user.uid, data);
+      });
+
+      // --- Social: Lista de amigos ---
+      state.unsubFriends = subscribeFriendsList(user.uid, (friends) => {
+        renderFriendsUI(friends);
       });
     }
 
     await reloadLeaderboard();
   });
 }
+
 
 
 // ===== Formularios =====
@@ -319,11 +343,9 @@ function init() {
   bindForms();
   bindAuthWatcher();
   bindMatchmaking();
-
-  // ***** CAMBIOS AQUI *****
-  // Cargar el leaderboard al inicio de la aplicación
+  bindFriendsUI();
+  bindInboxActions();
   reloadLeaderboard();
-  // Establecer la suscripción en tiempo real al leaderboard una sola vez al inicio
   state.unsubLb = subscribeLeaderboard(
     { limit: Number($('#lb-limit').value || 20) },
     paintLeaderboard
@@ -375,10 +397,143 @@ function bindMatchmaking() {
   });
 }
 
-// En tu init():
-// ...
+function bindFriendsUI() {
+  const input = document.querySelector('#fr-email');
+  const btn   = document.querySelector('#fr-send');
+  const msg   = document.querySelector('#fr-msg');
 
-// ...
+  if (!input || !btn) return;
+
+  btn.onclick = async () => {
+    if (!state.user) return;
+    const email = String(input.value || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      if (msg) msg.textContent = 'Escribe un correo válido.';
+      return;
+    }
+    btn.disabled = true; if (msg) msg.textContent = 'Enviando...';
+    try {
+      const fromName  = state.profile?.username || (state.profile?.email?.split('@')[0]) || 'Usuario';
+      const fromEmail = state.profile?.email || '';
+      await sendFriendRequest({ fromUid: state.user.uid, fromName, fromEmail, toEmail: email });
+      if (msg) msg.textContent = 'Solicitud enviada.';
+      input.value = '';
+    } catch (e) {
+      console.error('[friends] send', e);
+      if (msg) msg.textContent = e?.message || 'No se pudo enviar.';
+    } finally {
+      btn.disabled = false;
+      setTimeout(()=>{ if (msg) msg.textContent = ''; }, 1500);
+    }
+  };
+}
+
+function renderInboxUI(myUid, inboxObj) {
+  const ul = document.querySelector('#fr-inbox');
+  if (!ul) return;
+  ul.innerHTML = '';
+
+  const entries = Object.entries(inboxObj || {});
+  if (!entries.length) {
+    ul.innerHTML = `<li class="muted">No tienes solicitudes.</li>`;
+    return;
+  }
+
+  entries
+    .sort((a,b) => (a[1]?.ts || 0) - (b[1]?.ts || 0))
+    .forEach(([fromUid, req]) => {
+      const name   = req.fromName || (req.fromEmail ? req.fromEmail.split('@')[0] : fromUid);
+      const status = (req.status || 'pending');
+
+      const li = document.createElement('li');
+      li.dataset.from = fromUid;  // <- clave para delegación
+      li.innerHTML = `
+        <div class="row" style="justify-content:space-between; width:100%;">
+          <div><b>${name}</b> <span class="muted">(${status})</span></div>
+          ${status === 'pending' ? `
+            <div class="row">
+              <button type="button" class="fr-accept" data-from="${fromUid}">Aceptar</button>
+              <button type="button" class="fr-reject secondary" data-from="${fromUid}">Rechazar</button>
+            </div>
+          ` : ``}
+        </div>
+      `;
+      ul.appendChild(li);
+    });
+}
+
+
+
+function renderFriendsUI(friendsObj) {
+  const ul = document.querySelector('#fr-list');
+  if (!ul) return;
+  ul.innerHTML = '';
+  const entries = Object.entries(friendsObj || {});
+  if (!entries.length) {
+    ul.innerHTML = `<li class="muted">Aún no tienes amigos.</li>`;
+    return;
+  }
+  entries
+    .map(([uid, f]) => f)
+    .sort((a,b) => (a.username || '').localeCompare(b.username || ''))
+    .forEach((f) => {
+      const li = document.createElement('li');
+      const label = f.username || (f.email ? f.email.split('@')[0] : f.uid);
+      li.innerHTML = `
+        <div class="row" style="justify-content:space-between; width:100%;">
+          <span>${label}</span>
+          <button class="icon-btn" title="Eliminar">🗑️</button>
+        </div>
+      `;
+      li.querySelector('.icon-btn').onclick = () => {
+        if (!state.user) return;
+        removeFriendBoth(state.user.uid, f.uid).catch(console.error);
+      };
+      ul.appendChild(li);
+    });
+}
+
+function bindInboxActions() {
+  // Delegación global: funciona aunque vuelvas a renderizar la lista
+  document.addEventListener('click', async (e) => {
+    const acceptBtn = e.target.closest('#fr-inbox .fr-accept');
+    const rejectBtn = e.target.closest('#fr-inbox .fr-reject');
+    if (!acceptBtn && !rejectBtn) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!state.user) return;
+
+    // Tomamos el UID del remitente desde data-from (en el botón o el li)
+    const btn = acceptBtn || rejectBtn;
+    const fromUid = btn.getAttribute('data-from') ||
+                    btn.closest('li')?.dataset?.from;
+
+    if (!fromUid) return;
+
+    // Deshabilitamos mientras procesamos
+    const li = btn.closest('li');
+    const a = li?.querySelector('.fr-accept');
+    const r = li?.querySelector('.fr-reject');
+    if (a) a.disabled = true;
+    if (r) r.disabled = true;
+
+    try {
+      if (acceptBtn) {
+        await acceptFriendRequest({ myUid: state.user.uid, fromUid });
+      } else {
+        await rejectFriendRequest({ myUid: state.user.uid, fromUid });
+      }
+      // El UI se actualizará por la suscripción realtime (subscribeFriendInbox)
+    } catch (err) {
+      console.error('[friends] action error:', err);
+      // Rehabilita si algo falló
+      if (a) a.disabled = false;
+      if (r) r.disabled = false;
+    }
+  }, true);
+}
 
 
 
