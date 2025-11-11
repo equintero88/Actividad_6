@@ -101,6 +101,29 @@
   </div>
 </article>
 
+<article class="card">
+  <h3>Amigos</h3>
+
+  <div class="row" style="gap:8px; align-items:end;">
+    <label style="flex:1">
+      Correo del amigo
+      <input id="fr-email" placeholder="nombre@correo.com" />
+    </label>
+    <button id="fr-send" type="button">Enviar solicitud</button>
+  </div>
+  <p id="fr-msg" class="msg"></p>
+
+  <h4 style="margin-top:14px">Solicitudes recibidas</h4>
+  <ul id="fr-inbox" class="list-plain">
+    <li class="muted">No tienes solicitudes.</li>
+  </ul>
+
+  <h4 style="margin-top:14px">Tu lista de amigos</h4>
+  <ul id="fr-list" class="list-plain">
+    <li class="muted">Aún no tienes amigos.</li>
+  </ul>
+</article>
+
       <article class="card">
         <h3>Perfil</h3>
         <div id="profile-view" class="profile">
