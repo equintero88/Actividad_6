@@ -1,0 +1,139 @@
+<!-- Funcionando todo-->
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Actividad 3</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Actividad 3</h1>
+   
+    <div class="brand">Emanuel Quintero</div>
+  </header>
+
+  <main id="app">
+    <!-- ============ AUTH ============ -->
+    <section id="view-auth" class="view">
+      <div class="tabs" id="auth-tabs" role="tablist" aria-label="Selector de autenticación">
+        <button
+          type="button"
+          id="tab-login"
+          class="tab is-active"
+          role="tab"
+          aria-controls="form-login"
+          aria-selected="true"
+        >Login</button>
+
+        <button
+          type="button"
+          id="tab-register"
+          class="tab"
+          role="tab"
+          aria-controls="form-register"
+          aria-selected="false"
+        >Registro</button>
+      </div>
+
+      <form id="form-login" class="panel is-active" autocomplete="off" novalidate>
+        <h2>Iniciar sesión</h2>
+        <label>Email
+          <input name="email" type="email" required />
+        </label>
+        <label>Contraseña
+          <input name="password" type="password" required />
+        </label>
+        <button type="submit">Entrar</button>
+        <p class="msg" id="msg-login"></p>
+      </form>
+
+      <form id="form-register" class="panel" autocomplete="off" novalidate>
+        <h2>Crear cuenta</h2>
+        <label>Email
+          <input name="email" type="email" required />
+        </label>
+        <label>Nombre de usuario
+          <input name="username" required />
+        </label>
+        <label>Contraseña
+          <input name="password" type="password" required />
+        </label>
+        <button type="submit">Registrarme</button>
+        <p class="msg" id="msg-register"></p>
+      </form>
+    </section>
+
+    <!-- ============ LEADERBOARD (MOVIDO Y SIEMPRE VISIBLE) ============ -->
+    <article class="card">
+      <h3>Leaderboard</h3>
+      <div class="controls">
+        <label>Limit
+          <input id="lb-limit" type="number" value="20" min="1" max="100" />
+        </label>
+        <button id="btn-reload-lb" type="button">Recargar</button>
+      </div>
+      <table id="table-lb">
+        <thead>
+          <tr><th>#</th><th>Usuario</th><th>Score</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </article>
+
+    <!-- ============ DASHBOARD ============ -->
+    <section id="view-dashboard" class="view is-hidden">
+      <div class="bar">
+        <h2>Dashboard</h2>
+        <button id="btn-logout" type="button">Cerrar sesión</button>
+      </div>
+
+      <article class="card">
+  <h3>Matchmaking</h3>
+  <div class="controls">
+    <button id="btn-find-match" type="button">Buscar partida</button>
+    <button id="btn-cancel-match" type="button" disabled>Cancelar</button>
+    <div style="margin-left:auto">
+      <strong>Estado:</strong> <span id="mm-state">Idle</span> ·
+      <strong>Match:</strong> <span id="mm-match-id">—</span>
+    </div>
+  </div>
+</article>
+
+      <article class="card">
+        <h3>Perfil</h3>
+        <div id="profile-view" class="profile">
+          <div class="profile-row">
+            <div class="avatar" id="profile-avatar" aria-hidden="true">U</div>
+            <div>
+              <div class="profile-username" id="profile-username">—</div>
+              <div class="profile-sub" id="profile-email">Usuario autenticado</div>
+            </div>
+          </div>
+
+          <div class="profile-stats">
+            <div class="stat">
+              <div class="stat-label">Score</div>
+              <div class="stat-value" id="profile-score">0</div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>Minijuego</h3>
+        <canvas id="runner" width="800" height="220" style="width:100%;border:1px solid #2c2c2c;border-radius:8px;"></canvas>
+        <p class="msg" id="msg-game"></p>
+        <p style="font:14px/1.4 system-ui;margin:.5rem 0 0;color:#888">
+          Controles: <strong>Espacio / ↑</strong> saltar, <strong>R</strong> reiniciar, <strong>P</strong> pausar.
+        </p>
+      </article>
+      <!-- La sección del leaderboard ha sido eliminada de aquí. -->
+    </section>
+  </main>
+
+  <!-- Carga tu app (importa firebase.js internamente) -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>

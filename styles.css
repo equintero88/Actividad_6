@@ -1,0 +1,318 @@
+/* ---------- Reset & base ---------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --text: #1f2328;
+  --text-muted: #6e7781;
+  --border: #e4e7eb;
+  --primary: #2962ff;
+  --primary-contrast: #ffffff;
+  --danger: #d32f2f;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.10);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f141a;
+    --surface: #151b23;
+    --text: #e7edf3;
+    --text-muted: #94a3b8;
+    --border: #263040;
+    --primary: #4c8dff;
+    --primary-contrast: #0f141a;
+    --danger: #ff6b6b;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.25);
+  }
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* ---------- Topbar ---------- */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: .2px;
+}
+
+.brand {
+  font-weight: 600;
+  opacity: .85;
+}
+
+/* ---------- Layout ---------- */
+#app {
+  max-width: 980px;
+  margin: 24px auto;
+  padding: 0 16px;
+}
+
+.view.is-hidden {
+  display: none !important;
+}
+
+/* ---------- Tabs + Panels ---------- */
+.tabs {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.tab {
+  appearance: none;
+  border: 0;
+  padding: 10px 16px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.tab:hover { background: rgba(127,127,127,.08); }
+.tab.is-active {
+  color: var(--text);
+  background: rgba(127,127,127,.12);
+  font-weight: 600;
+}
+
+.panel {
+  display: none;
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.panel.is-active { display: block; }
+
+.panel h2 {
+  margin: 0 0 12px 0;
+  font-size: 18px;
+}
+
+/* ---------- Forms ---------- */
+label {
+  display: block;
+  margin: 10px 0;
+  font-weight: 600;
+  color: var(--text);
+}
+
+input[type="email"],
+input[type="password"],
+input[type="text"],
+input[type="number"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  transition: border .15s ease, box-shadow .15s ease;
+}
+
+input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 20%, transparent);
+}
+
+button {
+  appearance: none;
+  border: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--primary);
+  color: var(--primary-contrast);
+  box-shadow: var(--shadow);
+  transition: transform .04s ease, filter .15s ease, background .15s ease;
+}
+button:hover { filter: brightness(1.05); }
+button:active { transform: translateY(1px); }
+
+button.tab {
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.msg {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ---------- Dashboard ---------- */
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 8px 0 16px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.card h3 {
+  margin: 0 0 12px 0;
+  font-size: 17px;
+}
+
+/* ---------- Perfil ---------- */
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in oklab, var(--primary) 16%, var(--surface));
+  color: var(--text);
+  font-weight: 700;
+  border: 1px solid var(--border);
+}
+
+.profile-username {
+  font-size: 16px;
+  font-weight: 700;
+}
+.profile-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.profile-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.stat {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--surface) 85%, transparent), var(--surface));
+}
+.stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.stat-value {
+  font-size: 20px;
+  font-weight: 800;
+  margin-top: 4px;
+}
+
+/* ---------- Leaderboard ---------- */
+.controls {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.controls label {
+  margin: 0;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+thead th {
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--surface) 80%, transparent);
+}
+
+tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Resalta tu fila */
+tbody tr.me {
+  background: color-mix(in oklab, var(--primary) 10%, var(--surface));
+}
+
+/* ---------- Canvas del juego ---------- */
+#runner {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+/* ---------- Helpers responsivos ---------- */
+@media (max-width: 640px) {
+  .topbar { padding: 10px 12px; }
+  #app { margin: 16px auto; }
+  .profile-stats { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .bar h2 { font-size: 16px; }
+}
+
+/* ---------- Accesibilidad (focus visibles) ---------- */
+:focus-visible {
+  outline: 3px solid color-mix(in oklab, var(--primary) 40%, transparent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
